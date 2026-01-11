@@ -7,4 +7,5 @@ export interface Debt {
   payback_date: string; // ISO date string
   is_paid: boolean;
   created_at: string;
+  paid_at:string;
 }
