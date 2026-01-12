@@ -1,172 +1,197 @@
 import React, { useState, useEffect } from 'react';
-import { 
-  View, Text, StyleSheet, FlatList, TouchableOpacity, 
-  Modal, TextInput, ScrollView, Platform 
-} from 'react-native';
+import { View, Text, StyleSheet, FlatList, TextInput, Platform, Pressable, Modal, Alert } from 'react-native';
+import DateTimePicker from '@react-native-community/datetimepicker';
 import { supabase } from '../lib/supabase';
 import { Debt } from '../types/database';
+import { MotiView, MotiText } from 'moti';
 import * as Notifications from 'expo-notifications';
-
-// Configure how notifications appear when the app is open
-Notifications.setNotificationHandler({
-  handleNotification: async () => ({
-    shouldShowAlert: true,
-    shouldPlaySound: true,
-    shouldSetBadge: false,
-    shouldShowBanner: true,
-    shouldShowList: true,
-  }),
-});
 
 export default function Dashboard() {
   const [debts, setDebts] = useState<Debt[]>([]);
   const [total, setTotal] = useState(0);
   const [modalVisible, setModalVisible] = useState(false);
-
-  // Form State
+  
   const [title, setTitle] = useState('');
   const [amount, setAmount] = useState('');
-  const [description, setDescription] = useState('');
-  const [paybackDate, setPaybackDate] = useState(''); // Format: YYYY-MM-DD
+  const [description, setDescription] = useState(''); 
+  const [date, setDate] = useState(new Date());
+  const [showPicker, setShowPicker] = useState(false);
 
   useEffect(() => {
+    checkPermissions();
     fetchDebts();
   }, []);
 
-  async function fetchDebts() {
-    const { data, error } = await supabase
-      .from('debts')
-      .select('*')
-      .eq('is_paid', false)
-      .order('created_at', { ascending: false });
+  async function checkPermissions() {
+    if (Platform.OS === 'web') return;
+    const { status: existingStatus } = await Notifications.getPermissionsAsync();
+    if (existingStatus !== 'granted') {
+      await Notifications.requestPermissionsAsync();
+    }
+  }
 
+  async function fetchDebts() {
+    const { data } = await supabase.from('debts').select('*').eq('is_paid', false).order('created_at', { ascending: false });
     if (data) {
       setDebts(data);
-      const sum = data.reduce((acc, item) => acc + Number(item.amount), 0);
-      setTotal(sum);
+      setTotal(data.reduce((acc, item) => acc + Number(item.amount), 0));
+    }
+  }
+
+  // --- AUTH LOGIC ---
+  async function handleLogout() {
+  const logoutUser = async () => {
+    const { error } = await supabase.auth.signOut();
+    if (error) {
+      console.error("Logout Error:", error.message);
+    }
+  };
+
+  if (Platform.OS === 'web') {
+    // Standard JS confirm for Browser
+    if (window.confirm("Are you sure you want to logout?")) {
+      await logoutUser();
+    }
+  } else {
+    // Native Alert for iOS/Android
+    Alert.alert("Logout", "Are you sure?", [
+      { text: "Cancel", style: "cancel" },
+      { text: "Logout", style: "destructive", onPress: logoutUser }
+    ]);
+  }
+}
+
+  // --- NOTIFICATION LOGIC ---
+  async function scheduleDebtNotification(debtTitle: string, dueDate: Date) {
+    if (Platform.OS === 'web') return;
+    const triggerDate = new Date(dueDate);
+    triggerDate.setHours(9, 0, 0); 
+    if (triggerDate <= new Date()) return;
+
+    await Notifications.scheduleNotificationAsync({
+      content: {
+        title: "💸 Debt Reminder",
+        body: `Time to pay back: ${debtTitle}`,
+        data: { debtTitle }, 
+      },
+      trigger: { date: triggerDate } as Notifications.NotificationTriggerInput,
+    });
+  }
+
+  async function cancelNotification(debtTitle: string) {
+    if (Platform.OS === 'web') return;
+    const scheduled = await Notifications.getAllScheduledNotificationsAsync();
+    for (const notif of scheduled) {
+      if (notif.content.data?.debtTitle === debtTitle) {
+        await Notifications.cancelScheduledNotificationAsync(notif.identifier);
+      }
     }
   }
 
   async function addDebt() {
     if (!title || !amount) return;
-
     const { data: { user } } = await supabase.auth.getUser();
-    if (!user) return;
-
-    const newDebt = {
-      title,
-      amount: parseFloat(amount),
+    
+    const { error } = await supabase.from('debts').insert([{ 
+      title, 
+      amount: parseFloat(amount), 
       description,
-      payback_date: paybackDate ? new Date(paybackDate).toISOString() : null,
-      user_id: user.id,
-      is_paid: false
-    };
-
-    const { error } = await supabase.from('debts').insert([newDebt]);
+      payback_date: date.toISOString(), 
+      user_id: user?.id, 
+      is_paid: false 
+    }]);
 
     if (!error) {
-      // Schedule notification if a date exists (Mobile only)
-      if (paybackDate && Platform.OS !== 'web') {
-        scheduleNotification(title, new Date(paybackDate));
-      }
-
+      await scheduleDebtNotification(title, date);
       resetForm();
       fetchDebts();
     }
   }
 
-  async function markAsPaid(id: string) {
-    const { error } = await supabase
-      .from('debts')
-      .update({ 
-        is_paid: true, 
-        paid_at: new Date().toISOString() 
-      })
-      .eq('id', id);
-
-    if (!error) fetchDebts();
-  }
-
-  async function scheduleNotification(debtTitle: string, date: Date) {
-    const trigger = new Date(date);
-    trigger.setHours(9, 0, 0); // Remind at 9:00 AM on the due date
-
-    await Notifications.scheduleNotificationAsync({
-      content: {
-        title: "💸 Debt Reminder",
-        body: `Don't forget to pay back: ${debtTitle}`,
-      },
-      trigger: {
-      date: trigger, 
-    } as Notifications.NotificationTriggerInput,
-    });
+  async function markAsPaid(id: string, debtTitle: string) {
+    const { error } = await supabase.from('debts').update({ is_paid: true, paid_at: new Date().toISOString() }).eq('id', id);
+    if (!error) {
+      await cancelNotification(debtTitle);
+      fetchDebts();
+    }
   }
 
   const resetForm = () => {
-    setTitle('');
-    setAmount('');
-    setDescription('');
-    setPaybackDate('');
-    setModalVisible(false);
+    setTitle(''); setAmount(''); setDescription(''); setDate(new Date()); setModalVisible(false);
   };
 
   return (
     <View style={styles.container}>
-      {/* 1. HEADER */}
-      <View style={styles.totalCard}>
-        <Text style={styles.totalLabel}>TOTAL YOU OWE</Text>
-        <Text style={styles.totalAmount}>${total.toFixed(2)}</Text>
-      </View>
+      {/* UPDATED HEADER WITH LOGOUT */}
+      <MotiView from={{ height: 0 }} animate={{ height: 260 }} style={styles.header}>
+        <View style={styles.headerTopRow}>
+            <Text style={styles.headerTitle}>Total Debt</Text>
+            <Pressable onPress={handleLogout}>
+                {({ pressed }) => (
+                    <MotiView animate={{ opacity: pressed ? 0.5 : 1 }}>
+                        <Text style={styles.logoutText}>Logout</Text>
+                    </MotiView>
+                )}
+            </Pressable>
+        </View>
+        <MotiText key={total} from={{ scale: 0.8, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} style={styles.headerAmount}>
+          ${total.toFixed(2)}
+        </MotiText>
+      </MotiView>
 
-      {/* 2. LIST */}
       <FlatList
         data={debts}
         keyExtractor={(item) => item.id}
-        contentContainerStyle={{ paddingBottom: 100 }}
-        renderItem={({ item }) => (
-          <View style={styles.debtCard}>
+        contentContainerStyle={{ padding: 20 }}
+        renderItem={({ item, index }) => (
+          <MotiView from={{ opacity: 0, translateX: -50 }} animate={{ opacity: 1, translateX: 0 }} transition={{ delay: index * 100 }} style={styles.card}>
             <View style={{ flex: 1 }}>
-              <Text style={styles.debtTitle}>{item.title}</Text>
-              {item.description ? <Text style={styles.debtDesc}>{item.description}</Text> : null}
-              <Text style={styles.debtDate}>
-                Due: {item.payback_date ? new Date(item.payback_date).toLocaleDateString() : 'No date set'}
-              </Text>
+              <Text style={styles.cardTitle}>{item.title}</Text>
+              {item.description ? <Text style={styles.cardDesc}>{item.description}</Text> : null}
+              <Text style={styles.tagText}>📅 {new Date(item.payback_date).toLocaleDateString()}</Text>
             </View>
             <View style={{ alignItems: 'flex-end' }}>
-              <Text style={styles.debtAmount}>${Number(item.amount).toFixed(2)}</Text>
-              <TouchableOpacity style={styles.payButton} onPress={() => markAsPaid(item.id)}>
-                <Text style={styles.payButtonText}>Paid</Text>
-              </TouchableOpacity>
+              <Text style={styles.cardAmount}>${item.amount}</Text>
+              <Pressable onPress={() => markAsPaid(item.id, item.title)}>
+                {({ pressed }) => (
+                  <MotiView animate={{ scale: pressed ? 0.9 : 1, backgroundColor: pressed ? '#34C759' : '#000' }} style={styles.miniPaidBtn}>
+                    <Text style={styles.miniPaidText}>DONE</Text>
+                  </MotiView>
+                )}
+              </Pressable>
             </View>
-          </View>
+          </MotiView>
         )}
-        ListEmptyComponent={<Text style={styles.emptyText}>You're all caught up! ✨</Text>}
       />
 
-      {/* 3. FAB */}
-      <TouchableOpacity style={styles.fab} onPress={() => setModalVisible(true)}>
-        <Text style={styles.fabText}>+</Text>
-      </TouchableOpacity>
+      <Pressable style={styles.fabContainer} onPress={() => setModalVisible(true)}>
+        {({ pressed }) => (
+          <MotiView animate={{ scale: pressed ? 0.8 : 1, rotate: pressed ? '90deg' : '45deg' }} style={styles.fab}>
+            <Text style={styles.fabText}>+</Text>
+          </MotiView>
+        )}
+      </Pressable>
 
-      {/* 4. MODAL */}
-      <Modal visible={modalVisible} animationType="slide" transparent={true}>
+      <Modal visible={modalVisible} animationType="slide" transparent>
         <View style={styles.modalOverlay}>
-          <ScrollView contentContainerStyle={styles.modalContent}>
-            <Text style={styles.modalTitle}>New Debt</Text>
-            
-            <TextInput style={styles.input} placeholder="Title" value={title} onChangeText={setTitle} />
-            <TextInput style={styles.input} placeholder="Amount" keyboardType="numeric" value={amount} onChangeText={setAmount} />
+          <MotiView from={{ translateY: 300 }} animate={{ translateY: 0 }} style={styles.modalContent}>
+            <Text style={styles.modalHeader}>New Debt</Text>
+            <TextInput style={styles.input} placeholder="Who?" value={title} onChangeText={setTitle} />
+            <TextInput style={styles.input} placeholder="How much?" keyboardType="numeric" value={amount} onChangeText={setAmount} />
             <TextInput style={styles.input} placeholder="Description (Optional)" value={description} onChangeText={setDescription} />
-            <TextInput style={styles.input} placeholder="Due Date (YYYY-MM-DD)" value={paybackDate} onChangeText={setPaybackDate} />
-
-            <TouchableOpacity style={styles.saveButton} onPress={addDebt}>
-              <Text style={styles.saveButtonText}>Save Debt</Text>
-            </TouchableOpacity>
-            
-            <TouchableOpacity onPress={resetForm}>
-              <Text style={styles.cancelText}>Cancel</Text>
-            </TouchableOpacity>
-          </ScrollView>
+            <Pressable style={styles.input} onPress={() => setShowPicker(true)}>
+              <Text style={{color: '#555'}}>Due Date: {date.toLocaleDateString()}</Text>
+            </Pressable>
+            {showPicker && <DateTimePicker value={date} mode="date" display='spinner' onChange={(e, d) => { setShowPicker(false); if(d) setDate(d); }} />}
+            <Pressable onPress={addDebt}>
+              {({ pressed }) => (
+                <MotiView animate={{ scale: pressed ? 0.95 : 1 }} style={styles.primaryBtn}>
+                  <Text style={styles.primaryBtnText}>Add Debt</Text>
+                </MotiView>
+              )}
+            </Pressable>
+            <Pressable onPress={resetForm}><Text style={styles.cancelBtnText}>Nevermind</Text></Pressable>
+          </MotiView>
         </View>
       </Modal>
     </View>
@@ -174,34 +199,27 @@ export default function Dashboard() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#F2F2F7', paddingHorizontal: 20 },
-  totalCard: { 
-    backgroundColor: '#000', padding: 35, borderRadius: 28, 
-    marginTop: 60, marginBottom: 25, alignItems: 'center' 
-  },
-  totalLabel: { color: '#8E8E93', fontSize: 12, fontWeight: 'bold' },
-  totalAmount: { color: '#FFF', fontSize: 44, fontWeight: '800', marginTop: 5 },
-  debtCard: {
-    backgroundColor: '#FFF', padding: 20, borderRadius: 20, 
-    flexDirection: 'row', justifyContent: 'space-between', marginBottom: 15
-  },
-  debtTitle: { fontSize: 18, fontWeight: '700', color: '#000' },
-  debtDesc: { fontSize: 14, color: '#666', marginTop: 2 },
-  debtDate: { fontSize: 12, color: '#8E8E93', marginTop: 8 },
-  debtAmount: { fontSize: 18, fontWeight: '800', color: '#FF3B30' },
-  payButton: { backgroundColor: '#34C759', paddingVertical: 6, paddingHorizontal: 12, borderRadius: 8, marginTop: 10 },
-  payButtonText: { color: '#FFF', fontSize: 12, fontWeight: 'bold' },
-  emptyText: { textAlign: 'center', marginTop: 50, color: '#8E8E93' },
-  fab: {
-    position: 'absolute', bottom: 40, right: 30, backgroundColor: '#000', 
-    width: 60, height: 60, borderRadius: 30, justifyContent: 'center', alignItems: 'center'
-  },
-  fabText: { color: '#FFF', fontSize: 30 },
-  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-end' },
-  modalContent: { backgroundColor: '#FFF', padding: 30, borderTopLeftRadius: 30, borderTopRightRadius: 30 },
-  modalTitle: { fontSize: 24, fontWeight: '800', marginBottom: 20 },
-  input: { backgroundColor: '#F2F2F7', padding: 15, borderRadius: 12, marginBottom: 12 },
-  saveButton: { backgroundColor: '#000', padding: 18, borderRadius: 12, alignItems: 'center', marginTop: 10 },
-  saveButtonText: { color: '#FFF', fontWeight: 'bold' },
-  cancelText: { textAlign: 'center', marginTop: 20, color: '#FF3B30' }
+  container: { flex: 1, backgroundColor: '#fff' },
+  header: { backgroundColor: '#000', justifyContent: 'center', alignItems: 'center', borderBottomLeftRadius: 50, borderBottomRightRadius: 50, paddingHorizontal: 30 },
+  headerTopRow: { flexDirection: 'row', justifyContent: 'space-between', width: '100%', position: 'absolute', top: 60, paddingHorizontal: 30, alignItems: 'center' },
+  headerTitle: { color: '#888', fontWeight: '700', textTransform: 'uppercase', fontSize: 12, letterSpacing: 1 },
+  logoutText: { color: '#FF3B30', fontWeight: '700', fontSize: 12, textTransform: 'uppercase' },
+  headerAmount: { color: '#fff', fontSize: 55, fontWeight: '900', marginTop: 30 },
+  card: { backgroundColor: '#fff', borderRadius: 25, padding: 22, marginBottom: 15, flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderColor: '#f0f0f0', shadowColor: '#000', shadowOpacity: 0.05, shadowRadius: 10, elevation: 2 },
+  cardTitle: { fontSize: 18, fontWeight: '800', color: '#111' },
+  cardDesc: { fontSize: 13, color: '#666', marginTop: 4 },
+  tagText: { color: '#999', fontSize: 12, marginTop: 6, fontWeight: '600' },
+  cardAmount: { fontSize: 24, fontWeight: '900', color: '#000' },
+  miniPaidBtn: { paddingHorizontal: 18, paddingVertical: 10, borderRadius: 14, marginTop: 10 },
+  miniPaidText: { color: '#fff', fontSize: 11, fontWeight: '900' },
+  fabContainer: { position: 'absolute', bottom: 40, right: 30 },
+  fab: { width: 65, height: 65, backgroundColor: '#000', borderRadius: 22, justifyContent: 'center', alignItems: 'center', shadowColor: '#000', shadowOpacity: 0.3, shadowRadius: 8, elevation: 5 },
+  fabText: { color: '#fff', fontSize: 35, transform: [{ rotate: '-45deg' }] },
+  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'flex-end' },
+  modalContent: { backgroundColor: '#fff', padding: 35, borderTopLeftRadius: 45, borderTopRightRadius: 45, paddingBottom: 50 },
+  modalHeader: { fontSize: 26, fontWeight: '900', marginBottom: 25, color: '#000' },
+  input: { backgroundColor: '#f5f5f5', padding: 20, borderRadius: 18, marginBottom: 15, fontSize: 16, fontWeight: '500' },
+  primaryBtn: { backgroundColor: '#000', padding: 22, borderRadius: 20, alignItems: 'center', marginTop: 10 },
+  primaryBtnText: { color: '#fff', fontWeight: '900', fontSize: 18 },
+  cancelBtnText: { textAlign: 'center', marginTop: 25, color: '#bbb', fontWeight: '700', fontSize: 15 }
 });

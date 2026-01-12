@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { View, Text, TextInput, TouchableOpacity, StyleSheet, Platform } from 'react-native';
 import { supabase } from '../lib/supabase';
+import { MotiView, AnimatePresence } from 'moti'; // Added Moti for animations
 
 export default function AuthScreen() {
   const [email, setEmail] = useState('');
@@ -56,15 +57,27 @@ export default function AuthScreen() {
 
   return (
     <View style={styles.container}>
-      <View style={styles.card}>
+      <MotiView 
+        from={{ opacity: 0, scale: 0.9, translateY: 20 }}
+        animate={{ opacity: 1, scale: 1, translateY: 0 }}
+        transition={{ type: 'timing', duration: 500 }}
+        style={styles.card}
+      >
         <Text style={styles.title}>{isSignUp ? 'Create Account' : 'Welcome Back'}</Text>
         
-        {/* Error Message Display */}
-        {errorMsg ? (
-          <View style={styles.errorBox}>
-            <Text style={styles.errorText}>{errorMsg}</Text>
-          </View>
-        ) : null}
+        {/* Animated Error Message Display */}
+        <AnimatePresence>
+          {errorMsg && (
+            <MotiView 
+              from={{ opacity: 0, height: 0, marginBottom: 0 }}
+              animate={{ opacity: 1, height: 'auto', marginBottom: 20 }}
+              exit={{ opacity: 0, height: 0, marginBottom: 0 }}
+              style={styles.errorBox}
+            >
+              <Text style={styles.errorText}>{errorMsg}</Text>
+            </MotiView>
+          )}
+        </AnimatePresence>
 
         <TextInput
           style={styles.input}
@@ -76,6 +89,7 @@ export default function AuthScreen() {
           }}
           autoCapitalize="none"
           keyboardType="email-address"
+          placeholderTextColor="#999"
         />
         <TextInput
           style={styles.input}
@@ -86,16 +100,23 @@ export default function AuthScreen() {
             setErrorMsg(null);
           }}
           secureTextEntry
+          placeholderTextColor="#999"
         />
 
         <TouchableOpacity 
+          activeOpacity={0.8}
           style={[styles.button, loading && { opacity: 0.7 }]} 
           onPress={handleAuth} 
           disabled={loading}
         >
-          <Text style={styles.buttonText}>
-            {loading ? 'Processing...' : isSignUp ? 'Sign Up' : 'Login'}
-          </Text>
+          <MotiView
+            animate={{ scale: loading ? 0.95 : 1 }}
+            style={styles.buttonInner}
+          >
+            <Text style={styles.buttonText}>
+              {loading ? 'Processing...' : isSignUp ? 'Sign Up' : 'Login'}
+            </Text>
+          </MotiView>
         </TouchableOpacity>
 
         <TouchableOpacity onPress={() => {
@@ -106,7 +127,7 @@ export default function AuthScreen() {
             {isSignUp ? 'Already have an account? Login' : "Don't have an account? Sign Up"}
           </Text>
         </TouchableOpacity>
-      </View>
+      </MotiView>
     </View>
   );
 }
@@ -114,7 +135,7 @@ export default function AuthScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#f5f5f5',
+    backgroundColor: '#fff', // Switched to pure white for a cleaner look
     justifyContent: 'center',
     alignItems: 'center',
     padding: 20,
@@ -124,60 +145,69 @@ const styles = StyleSheet.create({
     maxWidth: 400,
     backgroundColor: '#fff',
     padding: 30,
-    borderRadius: 20,
-    // Shadow for iOS/Web
+    borderRadius: 32, // More rounded for modern feel
+    // High-end soft shadow
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.1,
-    shadowRadius: 12,
-    // Elevation for Android
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.08,
+    shadowRadius: 20,
     elevation: 5,
+    borderWidth: 1,
+    borderColor: '#f0f0f0',
   },
   title: {
-    fontSize: 28,
-    fontWeight: 'bold',
-    marginBottom: 20,
+    fontSize: 32,
+    fontWeight: '800', // Extra bold
+    marginBottom: 25,
     textAlign: 'center',
-    color: '#1a1a1a',
+    color: '#000',
+    letterSpacing: -0.5,
   },
   errorBox: {
-    backgroundColor: '#ffebee',
-    padding: 10,
-    borderRadius: 8,
-    marginBottom: 20,
+    backgroundColor: '#FFF5F5',
+    padding: 14,
+    borderRadius: 16,
     borderWidth: 1,
-    borderColor: '#ffcdd2',
+    borderColor: '#FFE0E0',
+    overflow: 'hidden',
   },
   errorText: {
-    color: '#d32f2f',
+    color: '#E53E3E',
     textAlign: 'center',
     fontSize: 14,
+    fontWeight: '600',
   },
   input: {
-    backgroundColor: '#f9f9f9',
-    padding: 15,
-    borderRadius: 12,
+    backgroundColor: '#F7F7F7',
+    padding: 18,
+    borderRadius: 18,
     marginBottom: 15,
     borderWidth: 1,
-    borderColor: '#eee',
+    borderColor: '#EEE',
     fontSize: 16,
+    color: '#000',
   },
   button: {
     backgroundColor: '#000',
-    padding: 18,
-    borderRadius: 12,
-    alignItems: 'center',
+    borderRadius: 18,
     marginTop: 10,
+    overflow: 'hidden',
+  },
+  buttonInner: {
+    padding: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   buttonText: {
     color: '#fff',
-    fontWeight: 'bold',
+    fontWeight: '700',
     fontSize: 16,
   },
   toggleText: {
-    marginTop: 20,
+    marginTop: 25,
     textAlign: 'center',
-    color: '#666',
+    color: '#888',
     fontSize: 14,
+    fontWeight: '600',
   },
 });
