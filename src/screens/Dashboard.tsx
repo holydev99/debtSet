@@ -10,7 +10,7 @@ import { MotiView, MotiText } from 'moti';
 import * as Notifications from 'expo-notifications';
 import { Ionicons } from '@expo/vector-icons'; 
 
-// 1. GLOBAL NOTIFICATION CONFIG (Fixed for TS error)
+// 1. GLOBAL NOTIFICATION CONFIG
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
     shouldShowAlert: true,
@@ -38,15 +38,33 @@ export default function Dashboard({ onGoToHistory }: { onGoToHistory: () => void
   const [showPicker, setShowPicker] = useState(false);
 
   useEffect(() => {
-    requestPermissions();
+    configureNotifications();
     fetchDebts();
   }, []);
 
-  async function requestPermissions() {
+  async function configureNotifications() {
     if (Platform.OS === 'web') return;
-    const { status } = await Notifications.requestPermissionsAsync();
-    if (status !== 'granted') {
-      Alert.alert("Permission Required", "Please enable notifications in settings to receive reminders.");
+
+    // Create Android Channel (Crucial for Android)
+    if (Platform.OS === 'android') {
+      await Notifications.setNotificationChannelAsync('default', {
+        name: 'default',
+        importance: Notifications.AndroidImportance.MAX,
+        vibrationPattern: [0, 250, 250, 250],
+        lightColor: '#FF231F7C',
+      });
+    }
+
+    const { status: existingStatus } = await Notifications.getPermissionsAsync();
+    let finalStatus = existingStatus;
+    
+    if (existingStatus !== 'granted') {
+      const { status } = await Notifications.requestPermissionsAsync();
+      finalStatus = status;
+    }
+    
+    if (finalStatus !== 'granted') {
+      Alert.alert("Permission Required", "Reminders won't work unless notifications are enabled in your phone settings.");
     }
   }
 
@@ -61,14 +79,19 @@ export default function Dashboard({ onGoToHistory }: { onGoToHistory: () => void
     }
   }
 
-  // 2. IMPROVED NOTIFICATION SCHEDULING (Fixed Trigger TS error)
   async function scheduleNotification(debtTitle: string, dueDate: Date) {
     if (Platform.OS === 'web') return null;
     
+    const { status } = await Notifications.getPermissionsAsync();
+    if (status !== 'granted') return null;
+
     const triggerDate = new Date(dueDate);
-    triggerDate.setHours(9, 0, 0, 0); // Remind at 9 AM
+    triggerDate.setHours(9, 0, 0, 0); // Set to 9 AM on the due date
     
-    if (triggerDate <= new Date()) return null;
+    // If user picks today, ensure it's at least 1 minute in the future for testing
+    if (triggerDate <= new Date()) {
+        triggerDate.setTime(new Date().getTime() + 60000); 
+    }
 
     try {
       const id = await Notifications.scheduleNotificationAsync({
@@ -77,12 +100,14 @@ export default function Dashboard({ onGoToHistory }: { onGoToHistory: () => void
           body: `Payment due for: ${debtTitle}`,
           sound: true,
         },
-        // FIX: Wrapped trigger in an object with 'date' key
-        trigger: { date: triggerDate } as Notifications.NotificationTriggerInput,
+        trigger: { 
+            date: triggerDate,
+            channelId: 'default', // Matches Android channel
+        } as Notifications.NotificationTriggerInput,
       });
       return id;
     } catch (e) {
-      console.error("Failed to schedule notification", e);
+      console.error(e);
       return null;
     }
   }
@@ -92,7 +117,7 @@ export default function Dashboard({ onGoToHistory }: { onGoToHistory: () => void
       try {
         await Notifications.cancelScheduledNotificationAsync(notifId);
       } catch (e) {
-        console.error("Failed to cancel notification", e);
+        console.error(e);
       }
     }
   }
@@ -101,7 +126,6 @@ export default function Dashboard({ onGoToHistory }: { onGoToHistory: () => void
     await supabase.auth.signOut();
   }
 
-  // 3. ADD DEBT
   async function addDebt() {
     if (!title || !amount) return;
     const { data: { user } } = await supabase.auth.getUser();
@@ -126,15 +150,19 @@ export default function Dashboard({ onGoToHistory }: { onGoToHistory: () => void
     }
   }
 
-  // 4. TOGGLE NOTIFICATION STATUS
   async function toggleNotification(debt: Debt) {
     if (debt.notification_id) {
+      // Turn Off
       await cancelNotification(debt.notification_id);
       await supabase.from('debts').update({ notification_id: null }).eq('id', debt.id);
     } else {
+      // Turn On
       const newId = await scheduleNotification(debt.title, new Date(debt.payback_date));
-      await supabase.from('debts').update({ notification_id: newId }).eq('id', debt.id);
+      if (newId) {
+        await supabase.from('debts').update({ notification_id: newId }).eq('id', debt.id);
+      }
     }
+    // Update local list to reflect switch change immediately
     fetchDebts();
     setDetailModalVisible(false);
   }
