@@ -78,7 +78,7 @@ export default function Dashboard({ onGoToHistory }: { onGoToHistory: () => void
     }
   }
 
-  // 2. SMART NOTIFICATION LOGIC
+  // 2. FIXED NOTIFICATION LOGIC - ONLY SCHEDULES FOR THE CORRECT DAY
   async function scheduleNotification(debtTitle: string, dueDate: Date) {
     if (Platform.OS === 'web') return null;
     
@@ -86,37 +86,46 @@ export default function Dashboard({ onGoToHistory }: { onGoToHistory: () => void
     if (status !== 'granted') return null;
 
     const now = new Date();
-    let triggerDate = new Date(dueDate);
+    // Use getTime to ensure we are working with a fresh instance
+    const triggerDate = new Date(dueDate.getTime());
 
-    // Check if due date is today
     const isToday = triggerDate.toDateString() === now.toDateString();
+    let finalTrigger: Date;
+    let bodyText = "";
 
     if (isToday) {
-      // SCENARIO 1: Due today? Remind immediately (in 5 seconds)
-      triggerDate = new Date(now.getTime() + 5000);
+      // If it's today, we set it for 10 seconds from now so you see it works
+      finalTrigger = new Date(now.getTime() + 10000);
+      bodyText = `💸 Payment due TODAY for: ${debtTitle}`;
     } else {
-      // SCENARIO 2: Due in future? Set reminder for 1 day BEFORE at 9:00 AM
+      // 1. Set the trigger to ONE DAY BEFORE the due date
       triggerDate.setDate(triggerDate.getDate() - 1);
+      // 2. Set the time to exactly 9:00 AM
       triggerDate.setHours(9, 0, 0, 0);
 
-      // SAFETY: If "1 day before at 9am" is already in the past, fire in 5 seconds
-      if (triggerDate <= now) {
-        triggerDate = new Date(now.getTime() + 5000);
+      // 3. Logic Check: If "yesterday at 9am" is already in the past, 
+      // it means the debt is due tomorrow. In this case, schedule for 10 seconds from now.
+      if (triggerDate.getTime() <= now.getTime()) {
+        finalTrigger = new Date(now.getTime() + 10000);
+        bodyText = `⚠️ Reminder: ${debtTitle} is due TOMORROW!`;
+      } else {
+        finalTrigger = triggerDate;
+        bodyText = `📅 Reminder: ${debtTitle} is due tomorrow!`;
       }
     }
 
     try {
       const id = await Notifications.scheduleNotificationAsync({
         content: {
-          title: "💸 Debt Reminder",
-          body: isToday ? `Payment due TODAY for: ${debtTitle}` : `Reminder: ${debtTitle} is due tomorrow!`,
+          title: "Debt Set Reminder",
+          body: bodyText,
           sound: true,
         },
-        trigger: { 
-            date: triggerDate,
-            channelId: 'default', 
+        trigger: {
+          date: finalTrigger,
         } as Notifications.NotificationTriggerInput,
       });
+      console.log(`Notification scheduled for: ${finalTrigger.toLocaleString()} with ID: ${id}`);
       return id;
     } catch (e) {
       console.error("Scheduling Error:", e);
@@ -213,7 +222,6 @@ export default function Dashboard({ onGoToHistory }: { onGoToHistory: () => void
 
   return (
     <View style={styles.container}>
-      {/* HEADER */}
       <MotiView from={{ height: 0 }} animate={{ height: 260 }} style={styles.header}>
         <View style={styles.headerTopRow}>
             <Text style={styles.headerTitle}>Active Debts</Text>
@@ -249,7 +257,6 @@ export default function Dashboard({ onGoToHistory }: { onGoToHistory: () => void
         )}
       />
 
-      {/* NAVIGATION & ACTION */}
       <View style={styles.historyContainer} pointerEvents="box-none">
         <Pressable onPress={onGoToHistory}>
           <MotiView style={styles.historyPill} animate={{ scale: 1 }}>
@@ -266,7 +273,6 @@ export default function Dashboard({ onGoToHistory }: { onGoToHistory: () => void
         </Pressable>
       </View>
 
-      {/* DETAIL MODAL */}
       <Modal visible={detailModalVisible} animationType="slide" transparent>
         <View style={styles.modalOverlay}>
           <MotiView style={styles.modalContent}>
@@ -278,10 +284,8 @@ export default function Dashboard({ onGoToHistory }: { onGoToHistory: () => void
                     <Ionicons name="trash-outline" size={24} color="#FF3B30" />
                   </Pressable>
                 </View>
-                
                 <Text style={styles.detailPrice}>${selectedDebt.amount}</Text>
                 <Text style={styles.detailDesc}>{selectedDebt.description || "No description provided."}</Text>
-                
                 <View style={styles.settingsRow}>
                   <Text style={styles.settingsText}>Reminders</Text>
                   <Switch 
@@ -290,11 +294,9 @@ export default function Dashboard({ onGoToHistory }: { onGoToHistory: () => void
                     trackColor={{ false: "#eee", true: "#000" }}
                   />
                 </View>
-
                 <Pressable onPress={() => markAsPaid(selectedDebt)} style={styles.primaryBtn}>
                     <Text style={styles.primaryBtnText}>Mark as Paid</Text>
                 </Pressable>
-                
                 <Pressable onPress={() => setDetailModalVisible(false)}>
                   <Text style={styles.cancelBtnText}>Close</Text>
                 </Pressable>
@@ -304,7 +306,6 @@ export default function Dashboard({ onGoToHistory }: { onGoToHistory: () => void
         </View>
       </Modal>
 
-      {/* ADD MODAL */}
       <Modal visible={addModalVisible} animationType="slide" transparent>
         <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={{flex:1}}>
           <View style={styles.modalOverlay}>
@@ -314,11 +315,9 @@ export default function Dashboard({ onGoToHistory }: { onGoToHistory: () => void
                 <TextInput style={styles.input} placeholder="Who do you owe?" value={title} onChangeText={setTitle} placeholderTextColor="#999" />
                 <TextInput style={styles.input} placeholder="Amount" keyboardType="numeric" value={amount} onChangeText={setAmount} placeholderTextColor="#999" />
                 <TextInput style={[styles.input, { height: 100 }]} placeholder="Notes (Optional)" value={description} onChangeText={setDescription} multiline placeholderTextColor="#999" />
-                
                 <Pressable style={styles.input} onPress={() => setShowPicker(true)}>
                   <Text style={{ color: '#000' }}>Due Date: {date.toLocaleDateString()}</Text>
                 </Pressable>
-                
                 {showPicker && (
                   <DateTimePicker 
                     value={date} 
@@ -327,7 +326,6 @@ export default function Dashboard({ onGoToHistory }: { onGoToHistory: () => void
                     onChange={(e, d) => { setShowPicker(false); if(d) setDate(d); }} 
                   />
                 )}
-
                 <Pressable onPress={addDebt} style={styles.primaryBtn}>
                     <Text style={styles.primaryBtnText}>Save Debt</Text>
                 </Pressable>
