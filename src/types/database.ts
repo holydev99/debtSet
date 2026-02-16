@@ -8,4 +8,5 @@ export interface Debt {
   is_paid: boolean;
   created_at: string;
   paid_at:string;
+  notification_id:string;
 }
