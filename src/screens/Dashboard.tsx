@@ -45,7 +45,6 @@ export default function Dashboard({ onGoToHistory }: { onGoToHistory: () => void
   async function configureNotifications() {
     if (Platform.OS === 'web') return;
 
-    // Create Android Channel (Crucial for Android)
     if (Platform.OS === 'android') {
       await Notifications.setNotificationChannelAsync('default', {
         name: 'default',
@@ -79,35 +78,48 @@ export default function Dashboard({ onGoToHistory }: { onGoToHistory: () => void
     }
   }
 
+  // 2. SMART NOTIFICATION LOGIC
   async function scheduleNotification(debtTitle: string, dueDate: Date) {
     if (Platform.OS === 'web') return null;
     
     const { status } = await Notifications.getPermissionsAsync();
     if (status !== 'granted') return null;
 
-    const triggerDate = new Date(dueDate);
-    triggerDate.setHours(9, 0, 0, 0); // Set to 9 AM on the due date
-    
-    // If user picks today, ensure it's at least 1 minute in the future for testing
-    if (triggerDate <= new Date()) {
-        triggerDate.setTime(new Date().getTime() + 60000); 
+    const now = new Date();
+    let triggerDate = new Date(dueDate);
+
+    // Check if due date is today
+    const isToday = triggerDate.toDateString() === now.toDateString();
+
+    if (isToday) {
+      // SCENARIO 1: Due today? Remind immediately (in 5 seconds)
+      triggerDate = new Date(now.getTime() + 5000);
+    } else {
+      // SCENARIO 2: Due in future? Set reminder for 1 day BEFORE at 9:00 AM
+      triggerDate.setDate(triggerDate.getDate() - 1);
+      triggerDate.setHours(9, 0, 0, 0);
+
+      // SAFETY: If "1 day before at 9am" is already in the past, fire in 5 seconds
+      if (triggerDate <= now) {
+        triggerDate = new Date(now.getTime() + 5000);
+      }
     }
 
     try {
       const id = await Notifications.scheduleNotificationAsync({
         content: {
           title: "💸 Debt Reminder",
-          body: `Payment due for: ${debtTitle}`,
+          body: isToday ? `Payment due TODAY for: ${debtTitle}` : `Reminder: ${debtTitle} is due tomorrow!`,
           sound: true,
         },
         trigger: { 
             date: triggerDate,
-            channelId: 'default', // Matches Android channel
+            channelId: 'default', 
         } as Notifications.NotificationTriggerInput,
       });
       return id;
     } catch (e) {
-      console.error(e);
+      console.error("Scheduling Error:", e);
       return null;
     }
   }
@@ -117,7 +129,7 @@ export default function Dashboard({ onGoToHistory }: { onGoToHistory: () => void
       try {
         await Notifications.cancelScheduledNotificationAsync(notifId);
       } catch (e) {
-        console.error(e);
+        console.error("Cancel Error:", e);
       }
     }
   }
@@ -152,17 +164,14 @@ export default function Dashboard({ onGoToHistory }: { onGoToHistory: () => void
 
   async function toggleNotification(debt: Debt) {
     if (debt.notification_id) {
-      // Turn Off
       await cancelNotification(debt.notification_id);
       await supabase.from('debts').update({ notification_id: null }).eq('id', debt.id);
     } else {
-      // Turn On
       const newId = await scheduleNotification(debt.title, new Date(debt.payback_date));
       if (newId) {
         await supabase.from('debts').update({ notification_id: newId }).eq('id', debt.id);
       }
     }
-    // Update local list to reflect switch change immediately
     fetchDebts();
     setDetailModalVisible(false);
   }
@@ -240,7 +249,7 @@ export default function Dashboard({ onGoToHistory }: { onGoToHistory: () => void
         )}
       />
 
-      {/* FLOATING ACTION BUTTONS */}
+      {/* NAVIGATION & ACTION */}
       <View style={styles.historyContainer} pointerEvents="box-none">
         <Pressable onPress={onGoToHistory}>
           <MotiView style={styles.historyPill} animate={{ scale: 1 }}>
@@ -257,7 +266,7 @@ export default function Dashboard({ onGoToHistory }: { onGoToHistory: () => void
         </Pressable>
       </View>
 
-      {/* DETAIL VIEW MODAL */}
+      {/* DETAIL MODAL */}
       <Modal visible={detailModalVisible} animationType="slide" transparent>
         <View style={styles.modalOverlay}>
           <MotiView style={styles.modalContent}>
@@ -295,12 +304,9 @@ export default function Dashboard({ onGoToHistory }: { onGoToHistory: () => void
         </View>
       </Modal>
 
-      {/* ADD DEBT MODAL */}
+      {/* ADD MODAL */}
       <Modal visible={addModalVisible} animationType="slide" transparent>
-        <KeyboardAvoidingView 
-          behavior={Platform.OS === 'ios' ? 'padding' : 'height'} 
-          style={{flex:1}}
-        >
+        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={{flex:1}}>
           <View style={styles.modalOverlay}>
             <View style={styles.modalContent}>
               <ScrollView showsVerticalScrollIndicator={false}>
@@ -346,13 +352,11 @@ const styles = StyleSheet.create({
   cardTitle: { fontSize: 18, fontWeight: '700' },
   tagText: { color: '#aaa', fontSize: 12, marginTop: 4 },
   cardAmount: { fontSize: 20, fontWeight: '800' },
-  
   fabContainer: { position: 'absolute', bottom: 40, right: 25 },
   fab: { width: 64, height: 64, backgroundColor: '#000', borderRadius: 22, justifyContent: 'center', alignItems: 'center', elevation: 5 },
   historyContainer: { position: 'absolute', bottom: 45, left: 0, right: 0, alignItems: 'center' },
   historyPill: { backgroundColor: '#fff', paddingHorizontal: 20, paddingVertical: 12, borderRadius: 30, borderWidth: 1, borderColor: '#eee', elevation: 3 },
   historyText: { fontSize: 11, fontWeight: '800', letterSpacing: 1 },
-
   modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
   modalContent: { backgroundColor: '#fff', padding: 30, borderTopLeftRadius: 40, borderTopRightRadius: 40, maxHeight: '80%' },
   modalHeaderRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 },
