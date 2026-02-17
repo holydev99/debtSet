@@ -1,3 +1,4 @@
+```bash
 DebtSet/
 ├── src/
 │   ├── api/             # Supabase logic (fetching/inserting data)
@@ -10,3 +11,4 @@ DebtSet/
 ├── App.tsx              # Root component (Navigation & Auth check)
 ├── app.json             # Expo config
 └── tsconfig.json        # TypeScript config
+```
