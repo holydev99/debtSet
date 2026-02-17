@@ -35,15 +35,15 @@ Follow these steps to get the project running on your local machine.
 * Expo Go app installed on your physical device, or an iOS Simulator / Android Emulator running.
 
 ### 1. Clone the repository
-\`\`\`bash
+```bash
 git clone https://github.com/holydev99/debtSet.git
 cd debtset
-\`\`\`
+```
 
 ### 2. Install dependencies
-\`\`\`bash
+```bash
 npm install
-\`\`\`
+```
 
 ### 3. Environment Variables
 Create a `.env` file in the root of your project and add your Supabase credentials. 
